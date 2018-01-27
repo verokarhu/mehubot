@@ -1,3 +1,5 @@
+extern crate mehubot;
+
 fn main() {
-    println!("Hello, world!");
+    mehubot::run().unwrap();
 }
