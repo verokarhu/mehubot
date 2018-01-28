@@ -8,7 +8,7 @@ use std::thread;
 use std::time::Duration;
 use self::reqwest::header::ContentType;
 
-static LONG_POLLING_TIMEOUT: u16 = 60;
+static LONG_POLLING_TIMEOUT: u16 = 600;
 
 struct HttpClient {
     get_updates_url: String,
