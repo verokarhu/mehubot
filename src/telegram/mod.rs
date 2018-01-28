@@ -6,11 +6,13 @@ use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+use self::reqwest::header::ContentType;
 
-static LONG_POLLING_TIMEOUT: u32 = 5;
+static LONG_POLLING_TIMEOUT: u16 = 60;
 
 struct HttpClient {
     get_updates_url: String,
+    get_updates_latest_id: Option<u64>,
     client: reqwest::Client,
 }
 
@@ -21,7 +23,7 @@ pub struct Client {
 
 pub enum Message {
     None,
-    InlineQuery { query: String },
+    InlineQuery { id: String, query: String },
 }
 
 #[derive(Deserialize)]
@@ -31,14 +33,14 @@ struct User {
 
 #[derive(Deserialize)]
 struct InlineQuery {
-    id: u64,
+    id: String,
     from: User,
     query: String,
 }
 
 #[derive(Deserialize)]
 struct Update {
-    id: u64,
+    update_id: u64,
     inline_query: Option<InlineQuery>,
 }
 
@@ -49,7 +51,10 @@ struct GetUpdatesResponse {
 }
 
 #[derive(Serialize)]
-struct GetUpdates {}
+struct GetUpdates {
+    timeout: u16,
+    offset: Option<u64>,
+}
 
 impl Client {
     pub fn new(api_key: String) -> Result<Client, &'static str> {
@@ -57,13 +62,13 @@ impl Client {
             return Err("API key required.");
         }
 
-        let get_updates_url = format!("https://api.telegram.org/bot{}/getUpdates", api_key);
-        let http_client = HttpClient { get_updates_url, client: reqwest::Client::new() };
-
         let (tx, receiver): (Sender<Update>, Receiver<Update>) = mpsc::channel();
         let (sender, rx): (Sender<bool>, Receiver<bool>) = mpsc::channel();
 
         thread::spawn(move || {
+            let get_updates_url = format!("https://api.telegram.org/bot{}/getUpdates", api_key);
+            let mut http_client = HttpClient { get_updates_url, get_updates_latest_id: None, client: reqwest::Client::new() };
+
             http_client.poll_server(tx, rx);
         });
 
@@ -80,7 +85,7 @@ impl Client {
 }
 
 impl HttpClient {
-    pub fn poll_server(&self, tx: Sender<Update>, rx: Receiver<bool>) {
+    pub fn poll_server(&mut self, tx: Sender<Update>, rx: Receiver<bool>) {
         let mut shutdown = false;
 
         while !shutdown {
@@ -101,13 +106,18 @@ impl HttpClient {
         }
     }
 
-    fn get_updates(&self) -> Vec<Update> {
+    fn get_updates(&mut self) -> Vec<Update> {
         let url = reqwest::Url::parse(&self.get_updates_url).expect("Could not parse get_updates_url.");
+        if let Some(id) = self.get_updates_latest_id {
+            self.get_updates_latest_id = Some(id + 1);
+        }
 
-        let mut response = match self.client.get(url).send() {
+        let body = serde_json::to_string(&GetUpdates { timeout: LONG_POLLING_TIMEOUT, offset: self.get_updates_latest_id }).expect("Could not serialize GetUpdates");
+
+        let mut response = match self.client.post(url).header(ContentType::json()).body(body).send() {
             Ok(r) => r,
             Err(e) => {
-                error!("GET failed in getUpdates: {}", e);
+                warn!("POST to getUpdates failed: {}", e);
                 return Vec::new();
             }
         };
@@ -120,6 +130,8 @@ impl HttpClient {
             }
         };
 
+        info!("Response body is {}", body);
+
         let response: GetUpdatesResponse = match serde_json::from_str(&body) {
             Ok(r) => r,
             Err(e) => {
@@ -129,13 +141,22 @@ impl HttpClient {
             }
         };
 
+        if !response.ok {
+            warn!("API call getUpdates returned false ok");
+            return Vec::new();
+        }
+
+        if let Some(u) = response.result.last() {
+            self.get_updates_latest_id = Some(u.update_id);
+        }
+
         response.result
     }
 }
 
 fn process_update(update: Update) -> Message {
     match update.inline_query {
-        Some(q) => return Message::InlineQuery { query: q.query },
+        Some(q) => return Message::InlineQuery { id: q.id, query: q.query },
         None => ()
     }
 

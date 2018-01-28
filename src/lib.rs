@@ -35,7 +35,7 @@ pub fn run() -> Result<(), Box<Error>> {
 
     loop {
         match client.receive_update() {
-            Message::InlineQuery { query } => println!("Received inline query: {}", query),
+            Message::InlineQuery { id, query } => info!("Received inline query: id = {} query = {}", id, query),
             Message::None => thread::sleep(Duration::from_millis(MESSAGE_CHECK_INTERVAL_MSEC))
         }
     }
