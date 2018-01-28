@@ -12,7 +12,7 @@ static LONG_POLLING_TIMEOUT: u16 = 60;
 
 struct HttpClient {
     get_updates_url: String,
-    get_updates_latest_id: Option<u64>,
+    get_updates_latest_id: Option<i64>,
     client: reqwest::Client,
 }
 
@@ -24,13 +24,18 @@ pub struct Client {
 pub enum Message {
     None,
     InlineQuery { id: String, query: String },
-    Photo { file_id: String, tags: Vec<String> },
+    Photo { file_id: String, owner_id: i64, chat_id: i64, tags: Vec<String> },
 }
 
 mod api {
     #[derive(Deserialize)]
     pub struct User {
-        pub id: u64
+        pub id: i64
+    }
+
+    #[derive(Deserialize)]
+    pub struct Chat {
+        pub id: i64
     }
 
     #[derive(Deserialize)]
@@ -42,7 +47,7 @@ mod api {
 
     #[derive(Deserialize)]
     pub struct Update {
-        pub update_id: u64,
+        pub update_id: i64,
         pub inline_query: Option<InlineQuery>,
         pub message: Option<Message>,
     }
@@ -56,7 +61,7 @@ mod api {
     #[derive(Serialize)]
     pub struct GetUpdates {
         pub timeout: u16,
-        pub offset: Option<u64>,
+        pub offset: Option<i64>,
     }
 
     #[derive(Deserialize)]
@@ -70,6 +75,8 @@ mod api {
     pub struct Message {
         pub photo: Option<Vec<PhotoSize>>,
         pub caption: Option<String>,
+        pub from: Option<User>,
+        pub chat: Chat,
     }
 }
 
@@ -197,10 +204,14 @@ fn process_message(message: api::Message) -> Message {
                           .collect();
         }
 
-        if let Some(photo) = photos.last() {
-            let file_id = photo.file_id.clone();
+        let mut owner_id = 0;
 
-            return Message::Photo { file_id, tags };
+        if let Some(owner) = message.from {
+            owner_id = owner.id;
+        }
+
+        if let Some(photo) = photos.last() {
+            return Message::Photo { file_id: photo.file_id.clone(), owner_id, chat_id: message.chat.id, tags };
         }
     }
 

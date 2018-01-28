@@ -1,10 +1,10 @@
 extern crate rusqlite;
 
 static DB_NAME: &'static str = "/database.sqlite";
-static SQL_CREATE_TABLE_MEDIA: &'static str = "CREATE TABLE IF NOT EXISTS media (file_id TEXT NOT NULL, type TEXT NOT NULL);";
+static SQL_CREATE_TABLE_MEDIA: &'static str = "CREATE TABLE IF NOT EXISTS media (file_id TEXT NOT NULL, type TEXT NOT NULL, owner_id INT NOT NULL DEFAULT 0, chat_id INT NOT NULL DEFAULT 0);";
 static SQL_CREATE_TABLE_TAG: &'static str = "CREATE TABLE IF NOT EXISTS tag (id INT NOT NULL, tag TEXT NOT NULL, counter INT NOT NULL DEFAULT 0, FOREIGN KEY(id) REFERENCES media(rowid), PRIMARY KEY(id, tag));";
 
-static SQL_INSERT_MEDIA: &'static str = "INSERT INTO media (file_id, type) VALUES (?, ?);";
+static SQL_INSERT_MEDIA: &'static str = "INSERT INTO media (file_id, type, owner_id, chat_id) VALUES (?, ?, ?, ?);";
 static SQL_INSERT_TAG: &'static str = "INSERT INTO tag (id, tag) VALUES (?, ?);";
 
 static MEDIA_TYPE_PHOTO: &'static str = "photo";
@@ -23,8 +23,8 @@ struct StatementCache<'a> {
 }
 
 pub enum Entity {
-    Photo { id: i64, file_id: String },
-    Tag { id: i64, tag: String, counter: u32 },
+    Photo { id: i64, file_id: String, owner_id: i64, chat_id: i64 },
+    Tag { id: i64, tag: String, counter: i64 },
 }
 
 impl Connection {
@@ -60,12 +60,12 @@ impl<'a> DB<'a> {
 
     pub fn insert(&mut self, entity: Entity) -> i64 {
         match entity {
-            Entity::Photo { id, file_id } => {
-                info!("Inserting photo with file_id {}", file_id);
+            Entity::Photo { id, file_id, owner_id, chat_id } => {
+                info!("Inserting photo with file_id = {} owner_id = {} chat_id = {}", file_id, owner_id, chat_id);
 
                 self.statement_cache
                     .insert_media
-                    .insert(&[&file_id, &MEDIA_TYPE_PHOTO])
+                    .insert(&[&file_id, &MEDIA_TYPE_PHOTO, &owner_id, &chat_id])
                     .expect("Failed to run insert_media_statement.")
             }
             Entity::Tag { id, tag, counter } => {

@@ -40,7 +40,7 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
     loop {
         match client.receive_update() {
             Message::InlineQuery { id, query } => handle_query(query),
-            Message::Photo { file_id, tags } => handle_photo(&mut db, file_id, tags),
+            Message::Photo { file_id, owner_id, chat_id, tags } => handle_photo(&mut db, file_id, owner_id, chat_id, tags),
             Message::None => thread::sleep(Duration::from_millis(MESSAGE_CHECK_INTERVAL_MSEC))
         }
     }
@@ -50,8 +50,8 @@ fn handle_query(query: String) {
     info!("Received inline query: {}", query);
 }
 
-fn handle_photo(db: &mut data::DB, file_id: String, tags: Vec<String>) {
-    let id = db.insert(data::Entity::Photo { id: 0, file_id });
+fn handle_photo(db: &mut data::DB, file_id: String, owner_id: i64, chat_id: i64, tags: Vec<String>) {
+    let id = db.insert(data::Entity::Photo { id: 0, file_id, owner_id, chat_id });
 
     for tag in tags {
         db.insert(data::Entity::Tag { id, tag, counter: 0 });
