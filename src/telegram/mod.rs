@@ -24,6 +24,7 @@ pub struct Client {
 pub enum Message {
     None,
     InlineQuery { id: String, query: String },
+    Photo { file_id: String, tags: Vec<String> },
 }
 
 mod api {
@@ -43,6 +44,7 @@ mod api {
     pub struct Update {
         pub update_id: u64,
         pub inline_query: Option<InlineQuery>,
+        pub message: Option<Message>,
     }
 
     #[derive(Deserialize)]
@@ -55,6 +57,19 @@ mod api {
     pub struct GetUpdates {
         pub timeout: u16,
         pub offset: Option<u64>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct PhotoSize {
+        pub file_id: String,
+        pub width: u32,
+        pub height: u32,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Message {
+        pub photo: Option<Vec<PhotoSize>>,
+        pub caption: Option<String>,
     }
 }
 
@@ -116,7 +131,11 @@ impl HttpClient {
 
         let body = serde_json::to_string(&api::GetUpdates { timeout: LONG_POLLING_TIMEOUT, offset: self.get_updates_latest_id }).expect("Could not serialize GetUpdates");
 
-        let mut response = match self.client.post(url).header(ContentType::json()).body(body).send() {
+        let mut response = match self.client
+                                     .post(url)
+                                     .header(ContentType::json())
+                                     .body(body)
+                                     .send() {
             Ok(r) => r,
             Err(e) => {
                 warn!("POST to getUpdates failed: {}", e);
@@ -159,6 +178,30 @@ impl HttpClient {
 fn process_update(update: api::Update) -> Message {
     if let Some(q) = update.inline_query {
         return Message::InlineQuery { id: q.id, query: q.query };
+    }
+
+    if let Some(m) = update.message {
+        return process_message(m);
+    }
+
+    Message::None
+}
+
+fn process_message(message: api::Message) -> Message {
+    if let Some(photos) = message.photo {
+        let mut tags: Vec<String> = Vec::new();
+
+        if let Some(caption) = message.caption {
+            tags = caption.split(" ")
+                          .map(|s: &str| s.to_string())
+                          .collect();
+        }
+
+        if let Some(photo) = photos.last() {
+            let file_id = photo.file_id.clone();
+
+            return Message::Photo { file_id, tags };
+        }
     }
 
     Message::None

@@ -7,6 +7,7 @@ extern crate log;
 extern crate env_logger;
 
 mod telegram;
+mod data;
 
 use std::error::Error;
 use std::thread;
@@ -15,28 +16,44 @@ use telegram::Message;
 
 static MESSAGE_CHECK_INTERVAL_MSEC: u64 = 200;
 
-struct Config {
+pub struct Config {
     api_key: String,
+    database_connection: data::Connection,
 }
 
-fn configure() -> Result<Config, Box<Error>> {
+pub fn configure() -> Result<Config, Box<Error>> {
     dotenv::dotenv()?;
 
     let api_key = dotenv::var("MEHU_TELEGRAM_APIKEY")?;
+    let database_path = dotenv::var("MEHU_DATASTORE_PATH")?;
+    let database_connection = data::Connection::new(database_path);
 
-    Ok(Config { api_key })
+    Ok(Config { api_key, database_connection })
 }
 
-pub fn run() -> Result<(), Box<Error>> {
-    let config = configure()?;
+pub fn run(config: Config) -> Result<(), Box<Error>> {
     let client = telegram::Client::new(config.api_key)?;
+    let mut db = data::DB::new(&config.database_connection);
 
     env_logger::init();
 
     loop {
         match client.receive_update() {
-            Message::InlineQuery { id, query } => info!("Received inline query: id = {} query = {}", id, query),
+            Message::InlineQuery { id, query } => handle_query(query),
+            Message::Photo { file_id, tags } => handle_photo(&mut db, file_id, tags),
             Message::None => thread::sleep(Duration::from_millis(MESSAGE_CHECK_INTERVAL_MSEC))
         }
+    }
+}
+
+fn handle_query(query: String) {
+    info!("Received inline query: {}", query);
+}
+
+fn handle_photo(db: &mut data::DB, file_id: String, tags: Vec<String>) {
+    let id = db.insert(data::Entity::Photo { id: 0, file_id });
+
+    for tag in tags {
+        db.insert(data::Entity::Tag { id, tag, counter: 0 });
     }
 }

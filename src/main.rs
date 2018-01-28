@@ -1,5 +1,6 @@
 extern crate mehubot;
 
 fn main() {
-    mehubot::run().unwrap();
+    let config = mehubot::configure().unwrap();
+    mehubot::run(config).unwrap();
 }
