@@ -17,7 +17,7 @@ struct HttpClient {
 }
 
 pub struct Client {
-    receiver: Receiver<Update>,
+    receiver: Receiver<api::Update>,
     sender: Sender<bool>,
 }
 
@@ -26,34 +26,36 @@ pub enum Message {
     InlineQuery { id: String, query: String },
 }
 
-#[derive(Deserialize)]
-struct User {
-    id: u64
-}
+mod api {
+    #[derive(Deserialize)]
+    pub struct User {
+        pub id: u64
+    }
 
-#[derive(Deserialize)]
-struct InlineQuery {
-    id: String,
-    from: User,
-    query: String,
-}
+    #[derive(Deserialize)]
+    pub struct InlineQuery {
+        pub id: String,
+        pub from: User,
+        pub query: String,
+    }
 
-#[derive(Deserialize)]
-struct Update {
-    update_id: u64,
-    inline_query: Option<InlineQuery>,
-}
+    #[derive(Deserialize)]
+    pub struct Update {
+        pub update_id: u64,
+        pub inline_query: Option<InlineQuery>,
+    }
 
-#[derive(Deserialize)]
-struct GetUpdatesResponse {
-    ok: bool,
-    result: Vec<Update>,
-}
+    #[derive(Deserialize)]
+    pub struct GetUpdatesResponse {
+        pub ok: bool,
+        pub result: Vec<Update>,
+    }
 
-#[derive(Serialize)]
-struct GetUpdates {
-    timeout: u16,
-    offset: Option<u64>,
+    #[derive(Serialize)]
+    pub struct GetUpdates {
+        pub timeout: u16,
+        pub offset: Option<u64>,
+    }
 }
 
 impl Client {
@@ -62,7 +64,7 @@ impl Client {
             return Err("API key required.");
         }
 
-        let (tx, receiver): (Sender<Update>, Receiver<Update>) = mpsc::channel();
+        let (tx, receiver): (Sender<api::Update>, Receiver<api::Update>) = mpsc::channel();
         let (sender, rx): (Sender<bool>, Receiver<bool>) = mpsc::channel();
 
         thread::spawn(move || {
@@ -85,7 +87,7 @@ impl Client {
 }
 
 impl HttpClient {
-    pub fn poll_server(&mut self, tx: Sender<Update>, rx: Receiver<bool>) {
+    pub fn poll_server(&mut self, tx: Sender<api::Update>, rx: Receiver<bool>) {
         let mut shutdown = false;
 
         while !shutdown {
@@ -106,13 +108,13 @@ impl HttpClient {
         }
     }
 
-    fn get_updates(&mut self) -> Vec<Update> {
+    fn get_updates(&mut self) -> Vec<api::Update> {
         let url = reqwest::Url::parse(&self.get_updates_url).expect("Could not parse get_updates_url.");
         if let Some(id) = self.get_updates_latest_id {
             self.get_updates_latest_id = Some(id + 1);
         }
 
-        let body = serde_json::to_string(&GetUpdates { timeout: LONG_POLLING_TIMEOUT, offset: self.get_updates_latest_id }).expect("Could not serialize GetUpdates");
+        let body = serde_json::to_string(&api::GetUpdates { timeout: LONG_POLLING_TIMEOUT, offset: self.get_updates_latest_id }).expect("Could not serialize GetUpdates");
 
         let mut response = match self.client.post(url).header(ContentType::json()).body(body).send() {
             Ok(r) => r,
@@ -132,7 +134,7 @@ impl HttpClient {
 
         info!("Response body is {}", body);
 
-        let response: GetUpdatesResponse = match serde_json::from_str(&body) {
+        let response: api::GetUpdatesResponse = match serde_json::from_str(&body) {
             Ok(r) => r,
             Err(e) => {
                 error!("Failed to deserialize GetUpdatesResponse: {}", e);
@@ -154,10 +156,9 @@ impl HttpClient {
     }
 }
 
-fn process_update(update: Update) -> Message {
-    match update.inline_query {
-        Some(q) => return Message::InlineQuery { id: q.id, query: q.query },
-        None => ()
+fn process_update(update: api::Update) -> Message {
+    if let Some(q) = update.inline_query {
+        return Message::InlineQuery { id: q.id, query: q.query };
     }
 
     Message::None
