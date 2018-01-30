@@ -51,9 +51,9 @@ fn handle_query(query: String) {
 }
 
 fn handle_photo(db: &mut data::DB, file_id: String, owner_id: i64, chat_id: i64, tags: Vec<String>) {
-    let id = db.insert(data::Entity::Photo { id: 0, file_id, owner_id, chat_id });
+    let media_id = db.insert(data::Entity::Media { id: 0, file_id, media_type: data::MediaType::Photo });
 
     for tag in tags {
-        db.insert(data::Entity::Tag { id, tag, counter: 0 });
+        db.insert(data::Entity::Tag { id: 0, media_id, tag, counter: 0 });
     }
 }
