@@ -24,7 +24,7 @@ pub struct Client {
 pub enum Message {
     None,
     InlineQuery { id: String, query: String },
-    Photo { file_id: String, owner_id: i64, chat_id: i64, tags: Vec<String> },
+    Photo { file_id: String, owner_id: i64, tags: Vec<String> },
 }
 
 mod api {
@@ -35,7 +35,9 @@ mod api {
 
     #[derive(Deserialize)]
     pub struct Chat {
-        pub id: i64
+        pub id: i64,
+        #[serde(rename = "type")]
+        pub _type: String,
     }
 
     #[derive(Deserialize)]
@@ -195,23 +197,19 @@ fn process_update(update: api::Update) -> Message {
 }
 
 fn process_message(message: api::Message) -> Message {
-    if let Some(photos) = message.photo {
-        let mut tags: Vec<String> = Vec::new();
+    let tags: Vec<String> = if let Some(caption) = message.caption {
+        caption.split(" ")
+               .map(|s: &str| s.to_string())
+               .collect()
+    } else {
+        Vec::new()
+    };
 
-        if let Some(caption) = message.caption {
-            tags = caption.split(" ")
-                          .map(|s: &str| s.to_string())
-                          .collect();
-        }
-
-        let mut owner_id = 0;
-
-        if let Some(owner) = message.from {
-            owner_id = owner.id;
-        }
-
-        if let Some(photo) = photos.last() {
-            return Message::Photo { file_id: photo.file_id.clone(), owner_id, chat_id: message.chat.id, tags };
+    if let Some(owner) = message.from {
+        if let Some(photos) = message.photo {
+            if let Some(photo) = photos.last() {
+                return Message::Photo { file_id: photo.file_id.clone(), owner_id: owner.id, tags };
+            }
         }
     }
 
