@@ -1,23 +1,46 @@
 extern crate rusqlite;
 
+use self::rusqlite::Error;
+use self::rusqlite::types::{Value, ValueRef, ToSql, ToSqlOutput, FromSql, FromSqlResult};
+
 static DB_NAME: &'static str = "/database.sqlite";
-static SQL_CREATE_TABLE_MEDIA: &'static str = "CREATE TABLE IF NOT EXISTS media (file_id TEXT NOT NULL, media_type INTEGER NOT NULL, PRIMARY KEY(file_id, media_type));";
-static SQL_CREATE_TABLE_TAG: &'static str = "CREATE TABLE IF NOT EXISTS tag (media_id INTEGER NOT NULL, tag TEXT NOT NULL, counter INT NOT NULL DEFAULT 0, FOREIGN KEY(media_id) REFERENCES media(rowid), PRIMARY KEY(media_id, tag));";
-static SQL_CREATE_TABLE_ACCESS: &'static str = "CREATE TABLE IF NOT EXISTS access (media_id INTEGER NOT NULL, owner_id INT NOT NULL DEFAULT 0, FOREIGN KEY(media_id) REFERENCES media(rowid), PRIMARY KEY(media_id, owner_id));";
+static SQL_CREATE_TABLE_MEDIA: &'static str = "CREATE TABLE IF NOT EXISTS media (media_id INTEGER PRIMARY KEY NOT NULL, file_id TEXT UNIQUE NOT NULL, media_type INTEGER NOT NULL);";
+static SQL_CREATE_TABLE_TAG: &'static str = "CREATE TABLE IF NOT EXISTS tag (media_id INTEGER NOT NULL, tag TEXT NOT NULL, counter INT NOT NULL DEFAULT 0, FOREIGN KEY(media_id) REFERENCES media(media_id), PRIMARY KEY(media_id, tag));";
+static SQL_CREATE_TABLE_ACCESS: &'static str = "CREATE TABLE IF NOT EXISTS access (media_id INTEGER NOT NULL, owner_id INT NOT NULL DEFAULT 0, FOREIGN KEY(media_id) REFERENCES media(media_id), PRIMARY KEY(media_id, owner_id));";
 
 static SQL_INSERT_MEDIA: &'static str = "INSERT INTO media (file_id, media_type) VALUES(?, ?);";
 static SQL_INSERT_TAG: &'static str = "INSERT INTO tag (media_id, tag) VALUES (?, ?);";
 static SQL_INSERT_ACCESS: &'static str = "INSERT INTO access (media_id, owner_id) VALUES (?, ?);";
 
-static SQL_READ_MEDIA: &'static str = "SELECT rowid FROM media WHERE file_id = ? AND media_type = ?;";
-static SQL_READ_TAG: &'static str = "SELECT rowid FROM tag WHERE media_id = ? AND tag = ?;";
-static SQL_READ_ACCESS: &'static str = "SELECT rowid FROM access WHERE media_id = ? AND owner_id = ?;";
+static SQL_READ_MEDIA: &'static str = "SELECT media_id FROM media WHERE file_id = ? AND media_type = ?;";
+static SQL_READ_TAG: &'static str = "SELECT media_id FROM tag WHERE media_id = ? AND tag = ?;";
+static SQL_READ_ACCESS: &'static str = "SELECT media_id FROM access WHERE media_id = ? AND owner_id = ?;";
+
+static SQL_READ_MEDIA_WITH_USER: &'static str = "SELECT a.media_id, file_id, media_type FROM media AS a, access AS b WHERE a.media_id = b.media_id AND owner_id = ?;";
 
 static SQL_TRANSACTION_BEGIN: &'static str = "BEGIN TRANSACTION;";
 static SQL_TRANSACTION_END: &'static str = "END TRANSACTION;";
 
+#[derive(Debug)]
 pub enum MediaType {
     Photo,
+}
+
+impl ToSql for MediaType {
+    fn to_sql(&self) -> Result<ToSqlOutput, Error> {
+        match self {
+            &MediaType::Photo => Ok(ToSqlOutput::Owned(Value::Integer(0))),
+        }
+    }
+}
+
+impl FromSql for MediaType {
+    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
+        match value.as_i64() {
+            Ok(_) => Ok(MediaType::Photo),
+            Err(e) => Err(e)
+        }
+    }
 }
 
 pub struct Connection {
@@ -33,6 +56,7 @@ struct StatementCache<'a> {
     insert_tag: rusqlite::Statement<'a>,
     insert_access: rusqlite::Statement<'a>,
     read_media: rusqlite::Statement<'a>,
+    read_media_with_owner: rusqlite::Statement<'a>,
     read_tag: rusqlite::Statement<'a>,
     read_access: rusqlite::Statement<'a>,
     transaction_begin: rusqlite::Statement<'a>,
@@ -83,6 +107,10 @@ impl<'a> DB<'a> {
                           .prepare(SQL_READ_MEDIA)
                           .expect("Failed preparing media read statement.");
 
+        let read_media_with_owner = c.sqlite_conn
+                                     .prepare(SQL_READ_MEDIA_WITH_USER)
+                                     .expect("Failed preparing media read with owner statement.");
+
         let read_tag = c.sqlite_conn
                         .prepare(SQL_READ_TAG)
                         .expect("Failed preparing tag read statement.");
@@ -99,9 +127,23 @@ impl<'a> DB<'a> {
                                .prepare(SQL_TRANSACTION_END)
                                .expect("Failed preparing transaction begin statement.");
 
-        let statement_cache = StatementCache { insert_media, insert_tag, insert_access, read_media, read_tag, read_access, transaction_begin, transaction_end };
+        let statement_cache = StatementCache { insert_media, insert_tag, insert_access, read_media, read_media_with_owner, read_tag, read_access, transaction_begin, transaction_end };
 
         DB { statement_cache }
+    }
+
+    pub fn read_media(&mut self, owner_id: i64) -> Vec<Entity> {
+        self.statement_cache
+            .read_media_with_owner
+            .query_map(&[&owner_id],
+                       |row| Entity::Media {
+                           id: row.get(0),
+                           file_id: row.get(1),
+                           media_type: row.get(2),
+                       })
+            .expect("Failed to read media with owner_id.")
+            .filter_map(|r| r.ok())
+            .collect()
     }
 
     pub fn insert(&mut self, entity: Entity) -> i64 {
@@ -110,10 +152,8 @@ impl<'a> DB<'a> {
             .execute(&[])
             .expect("Failed to begin transaction.");
 
-        let rowid = match entity {
+        let media_id = match entity {
             Entity::Media { id, file_id, media_type } => {
-                let media_type = media_type as u8;
-
                 if let Some(row) = self.statement_cache
                                        .read_media
                                        .query(&[&file_id, &media_type])
@@ -121,7 +161,7 @@ impl<'a> DB<'a> {
                                        .next() {
                     row.unwrap().get(0)
                 } else {
-                    info!("Inserting media with file_id = {} media_type = {}", file_id, media_type);
+                    info!("Inserting media with file_id = {} media_type = {:?}", file_id, media_type);
 
                     self.statement_cache
                         .insert_media
@@ -168,6 +208,6 @@ impl<'a> DB<'a> {
             .execute(&[])
             .expect("Failed to end transaction.");
 
-        rowid
+        media_id
     }
 }
