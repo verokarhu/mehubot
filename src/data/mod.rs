@@ -207,7 +207,7 @@ impl<'a> DB<'a> {
             .expect("Failed to begin transaction.");
 
         let media_id = match entity {
-            Entity::Media { id, file_id, media_type } => {
+            Entity::Media { file_id, media_type, .. } => {
                 if let Some(row) = self.statement_cache
                                        .read_media
                                        .query(&[&file_id, &media_type])
@@ -223,7 +223,7 @@ impl<'a> DB<'a> {
                         .expect("Failed to run insert_media statement.")
                 }
             }
-            Entity::Tag { id, media_id, tag, counter } => {
+            Entity::Tag { media_id, tag, .. } => {
                 if let Some(row) = self.statement_cache
                                        .read_tag
                                        .query(&[&media_id, &tag])
@@ -239,7 +239,7 @@ impl<'a> DB<'a> {
                         .expect("Failed to run insert_tag statement.")
                 }
             }
-            Entity::Access { id, media_id, owner_id } => {
+            Entity::Access { media_id, owner_id, .. } => {
                 if let Some(row) = self.statement_cache
                                        .read_access
                                        .query(&[&media_id, &owner_id])
