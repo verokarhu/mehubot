@@ -6,18 +6,15 @@ use self::rusqlite::types::{Value, ValueRef, ToSql, ToSqlOutput, FromSql, FromSq
 static DB_NAME: &'static str = "/database.sqlite";
 static SQL_CREATE_TABLE_MEDIA: &'static str = "CREATE TABLE IF NOT EXISTS media (media_id INTEGER PRIMARY KEY NOT NULL, file_id TEXT UNIQUE NOT NULL, media_type INTEGER NOT NULL);";
 static SQL_CREATE_TABLE_TAG: &'static str = "CREATE TABLE IF NOT EXISTS tag (media_id INTEGER NOT NULL, tag TEXT NOT NULL, counter INT NOT NULL DEFAULT 0, FOREIGN KEY(media_id) REFERENCES media(media_id), PRIMARY KEY(media_id, tag));";
-static SQL_CREATE_TABLE_ACCESS: &'static str = "CREATE TABLE IF NOT EXISTS access (media_id INTEGER NOT NULL, owner_id INT NOT NULL DEFAULT 0, FOREIGN KEY(media_id) REFERENCES media(media_id), PRIMARY KEY(media_id, owner_id));";
 
 static SQL_INSERT_MEDIA: &'static str = "INSERT INTO media (file_id, media_type) VALUES(?, ?);";
 static SQL_INSERT_TAG: &'static str = "INSERT INTO tag (media_id, tag) VALUES (?, ?);";
-static SQL_INSERT_ACCESS: &'static str = "INSERT INTO access (media_id, owner_id) VALUES (?, ?);";
 
 static SQL_READ_MEDIA: &'static str = "SELECT media_id FROM media WHERE file_id = ? AND media_type = ?;";
 static SQL_READ_TAG: &'static str = "SELECT media_id FROM tag WHERE media_id = ? AND tag = ?;";
-static SQL_READ_ACCESS: &'static str = "SELECT media_id FROM access WHERE media_id = ? AND owner_id = ?;";
 
-static SQL_READ_MEDIA_WITH_USER: &'static str = "SELECT DISTINCT a.media_id, file_id, media_type FROM media AS a, access AS b, tag AS c WHERE a.media_id = b.media_id AND a.media_id = c.media_id AND owner_id = ? ORDER BY counter DESC;";
-static SQL_READ_MEDIA_WITH_USER_AND_QUERY: &'static str = "SELECT a.media_id, file_id, media_type FROM media AS a, access AS b, tag AS c WHERE a.media_id = b.media_id AND a.media_id = c.media_id AND owner_id = ? AND tag LIKE ? ORDER BY counter DESC;";
+static SQL_READ_MEDIA_WITH_USER: &'static str = "SELECT DISTINCT a.media_id, file_id, media_type FROM media AS a, tag AS b WHERE a.media_id = b.media_id ORDER BY counter DESC;";
+static SQL_READ_MEDIA_WITH_USER_AND_QUERY: &'static str = "SELECT DISTINCT a.media_id, file_id, media_type FROM media AS a, tag AS b WHERE a.media_id = b.media_id AND tag LIKE ? ORDER BY counter DESC;";
 
 static SQL_INCREASE_TAG_COUNTER: &'static str = "UPDATE tag SET counter = counter + 1 WHERE media_id = ? AND tag LIKE ?;";
 
@@ -61,12 +58,10 @@ pub struct DB<'a> {
 struct StatementCache<'a> {
     insert_media: rusqlite::Statement<'a>,
     insert_tag: rusqlite::Statement<'a>,
-    insert_access: rusqlite::Statement<'a>,
     read_media: rusqlite::Statement<'a>,
     read_media_with_owner: rusqlite::Statement<'a>,
     read_media_with_owner_and_query: rusqlite::Statement<'a>,
     read_tag: rusqlite::Statement<'a>,
-    read_access: rusqlite::Statement<'a>,
     increase_tag_counter: rusqlite::Statement<'a>,
     transaction_begin: rusqlite::Statement<'a>,
     transaction_end: rusqlite::Statement<'a>,
@@ -75,7 +70,6 @@ struct StatementCache<'a> {
 pub enum Entity {
     Media { id: i64, file_id: String, media_type: MediaType },
     Tag { id: i64, media_id: i64, tag: String, counter: i64 },
-    Access { id: i64, media_id: i64, owner_id: i64 },
 }
 
 impl Connection {
@@ -96,10 +90,6 @@ impl<'a> DB<'a> {
          .execute(SQL_CREATE_TABLE_TAG, &[])
          .expect("Unable to create table tag.");
 
-        c.sqlite_conn
-         .execute(SQL_CREATE_TABLE_ACCESS, &[])
-         .expect("Unable to create table access.");
-
         let insert_media = c.sqlite_conn
                             .prepare(SQL_INSERT_MEDIA)
                             .expect("Failed preparing media insert statement.");
@@ -107,10 +97,6 @@ impl<'a> DB<'a> {
         let insert_tag = c.sqlite_conn
                           .prepare(SQL_INSERT_TAG)
                           .expect("Failed preparing tag insert statement.");
-
-        let insert_access = c.sqlite_conn
-                             .prepare(SQL_INSERT_ACCESS)
-                             .expect("Failed preparing access insert statement.");
 
         let read_media = c.sqlite_conn
                           .prepare(SQL_READ_MEDIA)
@@ -128,10 +114,6 @@ impl<'a> DB<'a> {
                         .prepare(SQL_READ_TAG)
                         .expect("Failed preparing tag read statement.");
 
-        let read_access = c.sqlite_conn
-                           .prepare(SQL_READ_ACCESS)
-                           .expect("Failed preparing access read statement.");
-
         let increase_tag_counter = c.sqlite_conn
                                     .prepare(SQL_INCREASE_TAG_COUNTER)
                                     .expect("Failed preparing increase tag counter statement.");
@@ -147,12 +129,10 @@ impl<'a> DB<'a> {
         let statement_cache = StatementCache {
             insert_media,
             insert_tag,
-            insert_access,
             read_media,
             read_media_with_owner,
             read_media_with_owner_and_query,
             read_tag,
-            read_access,
             increase_tag_counter,
             transaction_begin,
             transaction_end,
@@ -161,10 +141,10 @@ impl<'a> DB<'a> {
         DB { statement_cache }
     }
 
-    pub fn read_media(&mut self, owner_id: i64) -> Vec<Entity> {
+    pub fn read_media(&mut self) -> Vec<Entity> {
         self.statement_cache
             .read_media_with_owner
-            .query_map(&[&owner_id],
+            .query_map(&[],
                        |row| Entity::Media {
                            id: row.get(0),
                            file_id: row.get(1),
@@ -175,12 +155,12 @@ impl<'a> DB<'a> {
             .collect()
     }
 
-    pub fn read_media_with_query(&mut self, owner_id: i64, query: String) -> Vec<Entity> {
+    pub fn read_media_with_query(&mut self, query: String) -> Vec<Entity> {
         let query = query + "%";
 
         self.statement_cache
             .read_media_with_owner_and_query
-            .query_map(&[&owner_id, &query],
+            .query_map(&[&query],
                        |row| Entity::Media {
                            id: row.get(0),
                            file_id: row.get(1),
@@ -237,22 +217,6 @@ impl<'a> DB<'a> {
                         .insert_tag
                         .insert(&[&media_id, &tag])
                         .expect("Failed to run insert_tag statement.")
-                }
-            }
-            Entity::Access { media_id, owner_id, .. } => {
-                if let Some(row) = self.statement_cache
-                                       .read_access
-                                       .query(&[&media_id, &owner_id])
-                                       .expect("Failed to run read_access statement.")
-                                       .next() {
-                    row.unwrap().get(0)
-                } else {
-                    info!("Inserting access to owner_id {} to media_id {}", owner_id, media_id);
-
-                    self.statement_cache
-                        .insert_access
-                        .insert(&[&media_id, &owner_id])
-                        .expect("Failed to run insert_access statement.")
                 }
             }
         };

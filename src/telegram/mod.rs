@@ -29,10 +29,10 @@ pub struct Client {
 
 pub enum UpdateMessage {
     None,
-    InlineQuery { inline_query_id: String, user_id: i64, query: String },
+    InlineQuery { inline_query_id: String, query: String },
     ChosenInlineResult { media_id: i64, query: String },
-    Photo { file_id: String, owner_id: i64, tags: Vec<String> },
-    Document { file_id: String, mime_type: String, owner_id: i64, tags: Vec<String> },
+    Photo { file_id: String, tags: Vec<String> },
+    Document { file_id: String, mime_type: String, tags: Vec<String> },
 }
 
 pub enum AnswerMessage {
@@ -44,7 +44,8 @@ pub enum AnswerMessage {
 mod api {
     #[derive(Deserialize)]
     pub struct User {
-        pub id: i64
+        pub id: i64,
+        pub first_name: String,
     }
 
     #[derive(Deserialize)]
@@ -291,7 +292,7 @@ impl HttpClient {
 
 fn process_update(update: api::Update) -> UpdateMessage {
     if let Some(q) = update.inline_query {
-        return UpdateMessage::InlineQuery { inline_query_id: q.id, user_id: q.from.id, query: q.query };
+        return UpdateMessage::InlineQuery { inline_query_id: q.id, query: q.query };
     }
 
     if let Some(m) = update.message {
@@ -307,7 +308,7 @@ fn process_update(update: api::Update) -> UpdateMessage {
 }
 
 fn process_message(message: api::Message) -> UpdateMessage {
-    let tags: Vec<String> = if let Some(caption) = message.caption {
+    let mut tags: Vec<String> = if let Some(caption) = message.caption {
         caption.split(" ")
                .map(|s: &str| s.to_string())
                .collect()
@@ -315,16 +316,18 @@ fn process_message(message: api::Message) -> UpdateMessage {
         Vec::new()
     };
 
-    if let Some(owner) = message.from {
-        if let Some(photos) = message.photo {
-            if let Some(photo) = photos.last() {
-                return UpdateMessage::Photo { file_id: photo.file_id.clone(), owner_id: owner.id, tags };
-            }
-        }
+    if let Some(from) = message.from {
+        tags.push(from.first_name);
+    }
 
-        if let Some(document) = message.document {
-            return UpdateMessage::Document { file_id: document.file_id.clone(), mime_type: document.mime_type, owner_id: owner.id, tags };
+    if let Some(photos) = message.photo {
+        if let Some(photo) = photos.last() {
+            return UpdateMessage::Photo { file_id: photo.file_id.clone(), tags };
         }
+    }
+
+    if let Some(document) = message.document {
+        return UpdateMessage::Document { file_id: document.file_id.clone(), mime_type: document.mime_type, tags };
     }
 
     UpdateMessage::None

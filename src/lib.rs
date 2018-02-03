@@ -40,22 +40,22 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 
     loop {
         match client.receive_update() {
-            UpdateMessage::InlineQuery { inline_query_id, user_id, query } => handle_query(&mut db, &client, inline_query_id, user_id, query),
+            UpdateMessage::InlineQuery { inline_query_id, query } => handle_query(&mut db, &client, inline_query_id, query),
             UpdateMessage::ChosenInlineResult { media_id, query } => handle_chosen_inline_result(&mut db, media_id, query),
-            UpdateMessage::Photo { file_id, owner_id, tags } => handle_media(&mut db, file_id, owner_id, tags, data::MediaType::Photo),
-            UpdateMessage::Document { file_id, mime_type, owner_id, tags } => handle_document(&mut db, file_id, mime_type, owner_id, tags),
+            UpdateMessage::Photo { file_id, tags } => handle_media(&mut db, file_id, tags, data::MediaType::Photo),
+            UpdateMessage::Document { file_id, mime_type, tags } => handle_document(&mut db, file_id, mime_type, tags),
             UpdateMessage::None => thread::sleep(Duration::from_millis(MESSAGE_CHECK_INTERVAL_MSEC))
         }
     }
 }
 
-fn handle_query(db: &mut data::DB, client: &telegram::Client, inline_query_id: String, owner_id: i64, query: String) {
+fn handle_query(db: &mut data::DB, client: &telegram::Client, inline_query_id: String, query: String) {
     info!("Received inline query {} with id {}", query, inline_query_id);
 
     let results = if query.len() == 0 {
-        db.read_media(owner_id)
+        db.read_media()
     } else {
-        db.read_media_with_query(owner_id, query)
+        db.read_media_with_query(query)
     };
 
     client.answer_inline_query(inline_query_id,
@@ -72,10 +72,8 @@ fn handle_query(db: &mut data::DB, client: &telegram::Client, inline_query_id: S
                                    }).collect());
 }
 
-fn handle_media(db: &mut data::DB, file_id: String, owner_id: i64, tags: Vec<String>, media_type: data::MediaType) {
+fn handle_media(db: &mut data::DB, file_id: String, tags: Vec<String>, media_type: data::MediaType) {
     let media_id = db.insert(data::Entity::Media { id: 0, file_id, media_type });
-
-    db.insert(data::Entity::Access { id: 0, media_id, owner_id });
 
     for tag in tags {
         db.insert(data::Entity::Tag { id: 0, media_id, tag, counter: 0 });
@@ -88,11 +86,11 @@ fn handle_chosen_inline_result(db: &mut data::DB, media_id: i64, query: String) 
     db.increase_tag_counter(media_id, query);
 }
 
-fn handle_document(mut db: &mut data::DB, file_id: String, mime_type: String, owner_id: i64, tags: Vec<String>) {
+fn handle_document(mut db: &mut data::DB, file_id: String, mime_type: String, tags: Vec<String>) {
     info!("Received document {} with mime_type {}", file_id, mime_type);
 
     match mime_type.as_ref() {
-        "video/mp4" => handle_media(&mut db, file_id, owner_id, tags, data::MediaType::Mpeg4Gif),
+        "video/mp4" => handle_media(&mut db, file_id, tags, data::MediaType::Mpeg4Gif),
         _ => ()
     }
 }
