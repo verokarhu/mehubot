@@ -27,11 +27,18 @@ pub struct Client {
     http_client: HttpClient,
 }
 
-pub enum Message {
+pub enum UpdateMessage {
     None,
     InlineQuery { inline_query_id: String, user_id: i64, query: String },
     ChosenInlineResult { media_id: i64, query: String },
-    Photo { file_id: String, media_id: i64, owner_id: i64, tags: Vec<String> },
+    Photo { file_id: String, owner_id: i64, tags: Vec<String> },
+    Document { file_id: String, mime_type: String, owner_id: i64, tags: Vec<String> },
+}
+
+pub enum AnswerMessage {
+    None,
+    Photo { file_id: String, media_id: i64 },
+    Mpeg4Gif { file_id: String, media_id: i64 },
 }
 
 mod api {
@@ -76,9 +83,18 @@ mod api {
     }
 
     #[derive(Serialize)]
+    pub struct InlineQueryResultCachedMpeg4Gif {
+        #[serde(rename = "type")]
+        pub _type: String,
+        pub id: String,
+        pub mpeg4_file_id: String,
+    }
+
+    #[derive(Serialize)]
     #[serde(untagged)]
     pub enum Answer {
         Photo(InlineQueryResultCachedPhoto),
+        Mpeg4Gif(InlineQueryResultCachedMpeg4Gif),
     }
 
     #[derive(Deserialize)]
@@ -109,11 +125,18 @@ mod api {
     }
 
     #[derive(Deserialize)]
+    pub struct Document {
+        pub file_id: String,
+        pub mime_type: String,
+    }
+
+    #[derive(Deserialize)]
     pub struct Message {
         pub photo: Option<Vec<PhotoSize>>,
         pub caption: Option<String>,
         pub from: Option<User>,
         pub chat: Chat,
+        pub document: Option<Document>,
     }
 }
 
@@ -138,15 +161,15 @@ impl Client {
         Ok(Client { receiver, sender, http_client })
     }
 
-    pub fn receive_update(&self) -> Message {
+    pub fn receive_update(&self) -> UpdateMessage {
         match self.receiver.try_recv() {
             Ok(u) => process_update(u),
-            Err(e) if e == TryRecvError::Empty => Message::None,
+            Err(e) if e == TryRecvError::Empty => UpdateMessage::None,
             Err(e) => panic!(e)
         }
     }
 
-    pub fn answer_inline_query(&self, inline_query_id: String, messages: Vec<Message>) {
+    pub fn answer_inline_query(&self, inline_query_id: String, messages: Vec<AnswerMessage>) {
         self.http_client.answer_inline_query(inline_query_id, messages);
     }
 }
@@ -226,15 +249,20 @@ impl HttpPollClient {
 }
 
 impl HttpClient {
-    fn answer_inline_query(&self, inline_query_id: String, messages: Vec<Message>) {
+    fn answer_inline_query(&self, inline_query_id: String, messages: Vec<AnswerMessage>) {
         let url = reqwest::Url::parse(&self.answer_inline_query_url).expect("Could not parse answer_inline_query_url.");
         let results = messages.iter()
                               .map(|m| {
                                   match m {
-                                      &Message::Photo { ref file_id, ref media_id, .. } => Some(api::Answer::Photo(api::InlineQueryResultCachedPhoto {
+                                      &AnswerMessage::Photo { ref file_id, ref media_id } => Some(api::Answer::Photo(api::InlineQueryResultCachedPhoto {
                                           _type: "photo".to_string(),
                                           id: media_id.to_string(),
                                           photo_file_id: file_id.clone(),
+                                      })),
+                                      &AnswerMessage::Mpeg4Gif { ref file_id, ref media_id } => Some(api::Answer::Mpeg4Gif(api::InlineQueryResultCachedMpeg4Gif {
+                                          _type: "mpeg4_gif".to_string(),
+                                          id: media_id.to_string(),
+                                          mpeg4_file_id: file_id.clone(),
                                       })),
                                       _ => None
                                   }
@@ -261,9 +289,9 @@ impl HttpClient {
     }
 }
 
-fn process_update(update: api::Update) -> Message {
+fn process_update(update: api::Update) -> UpdateMessage {
     if let Some(q) = update.inline_query {
-        return Message::InlineQuery { inline_query_id: q.id, user_id: q.from.id, query: q.query };
+        return UpdateMessage::InlineQuery { inline_query_id: q.id, user_id: q.from.id, query: q.query };
     }
 
     if let Some(m) = update.message {
@@ -272,13 +300,13 @@ fn process_update(update: api::Update) -> Message {
 
     if let Some(r) = update.chosen_inline_result {
         let media_id = r.result_id.parse::<i64>().expect("Returned result_id not an integer");
-        return Message::ChosenInlineResult { media_id, query: r.query };
+        return UpdateMessage::ChosenInlineResult { media_id, query: r.query };
     }
 
-    Message::None
+    UpdateMessage::None
 }
 
-fn process_message(message: api::Message) -> Message {
+fn process_message(message: api::Message) -> UpdateMessage {
     let tags: Vec<String> = if let Some(caption) = message.caption {
         caption.split(" ")
                .map(|s: &str| s.to_string())
@@ -290,12 +318,16 @@ fn process_message(message: api::Message) -> Message {
     if let Some(owner) = message.from {
         if let Some(photos) = message.photo {
             if let Some(photo) = photos.last() {
-                return Message::Photo { file_id: photo.file_id.clone(), media_id: 0, owner_id: owner.id, tags };
+                return UpdateMessage::Photo { file_id: photo.file_id.clone(), owner_id: owner.id, tags };
             }
+        }
+
+        if let Some(document) = message.document {
+            return UpdateMessage::Document { file_id: document.file_id.clone(), mime_type: document.mime_type, owner_id: owner.id, tags };
         }
     }
 
-    Message::None
+    UpdateMessage::None
 }
 
 impl Drop for Client {
