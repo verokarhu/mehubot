@@ -206,7 +206,7 @@ impl<'a> DB<'a> {
             Entity::Tag { media_id, tag, .. } => {
                 if let Some(row) = self.statement_cache
                                        .read_tag
-                                       .query(&[&media_id, &tag])
+                                       .query(&[&media_id, &tag.to_lowercase()])
                                        .expect("Failed to run read_tag statement.")
                                        .next() {
                     row.unwrap().get(0)
