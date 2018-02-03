@@ -16,7 +16,8 @@ static SQL_READ_MEDIA: &'static str = "SELECT media_id FROM media WHERE file_id 
 static SQL_READ_TAG: &'static str = "SELECT media_id FROM tag WHERE media_id = ? AND tag = ?;";
 static SQL_READ_ACCESS: &'static str = "SELECT media_id FROM access WHERE media_id = ? AND owner_id = ?;";
 
-static SQL_READ_MEDIA_WITH_USER: &'static str = "SELECT a.media_id, file_id, media_type FROM media AS a, access AS b WHERE a.media_id = b.media_id AND owner_id = ?;";
+static SQL_READ_MEDIA_WITH_USER: &'static str = "SELECT DISTINCT a.media_id, file_id, media_type FROM media AS a, access AS b, tag AS c WHERE a.media_id = b.media_id AND a.media_id = c.media_id AND owner_id = ? ORDER BY counter DESC;";
+static SQL_READ_MEDIA_WITH_USER_AND_QUERY: &'static str = "SELECT a.media_id, file_id, media_type FROM media AS a, access AS b, tag AS c WHERE a.media_id = b.media_id AND a.media_id = c.media_id AND owner_id = ? AND tag LIKE ? ORDER BY counter DESC;";
 
 static SQL_TRANSACTION_BEGIN: &'static str = "BEGIN TRANSACTION;";
 static SQL_TRANSACTION_END: &'static str = "END TRANSACTION;";
@@ -57,6 +58,7 @@ struct StatementCache<'a> {
     insert_access: rusqlite::Statement<'a>,
     read_media: rusqlite::Statement<'a>,
     read_media_with_owner: rusqlite::Statement<'a>,
+    read_media_with_owner_and_query: rusqlite::Statement<'a>,
     read_tag: rusqlite::Statement<'a>,
     read_access: rusqlite::Statement<'a>,
     transaction_begin: rusqlite::Statement<'a>,
@@ -111,6 +113,10 @@ impl<'a> DB<'a> {
                                      .prepare(SQL_READ_MEDIA_WITH_USER)
                                      .expect("Failed preparing media read with owner statement.");
 
+        let read_media_with_owner_and_query = c.sqlite_conn
+                                               .prepare(SQL_READ_MEDIA_WITH_USER_AND_QUERY)
+                                               .expect("Failed preparing media read with owner and query statement.");
+
         let read_tag = c.sqlite_conn
                         .prepare(SQL_READ_TAG)
                         .expect("Failed preparing tag read statement.");
@@ -127,7 +133,18 @@ impl<'a> DB<'a> {
                                .prepare(SQL_TRANSACTION_END)
                                .expect("Failed preparing transaction begin statement.");
 
-        let statement_cache = StatementCache { insert_media, insert_tag, insert_access, read_media, read_media_with_owner, read_tag, read_access, transaction_begin, transaction_end };
+        let statement_cache = StatementCache {
+            insert_media,
+            insert_tag,
+            insert_access,
+            read_media,
+            read_media_with_owner,
+            read_media_with_owner_and_query,
+            read_tag,
+            read_access,
+            transaction_begin,
+            transaction_end,
+        };
 
         DB { statement_cache }
     }
@@ -136,6 +153,22 @@ impl<'a> DB<'a> {
         self.statement_cache
             .read_media_with_owner
             .query_map(&[&owner_id],
+                       |row| Entity::Media {
+                           id: row.get(0),
+                           file_id: row.get(1),
+                           media_type: row.get(2),
+                       })
+            .expect("Failed to read media with owner_id.")
+            .filter_map(|r| r.ok())
+            .collect()
+    }
+
+    pub fn read_media_with_query(&mut self, owner_id: i64, query: String) -> Vec<Entity> {
+        let query = query + "%";
+
+        self.statement_cache
+            .read_media_with_owner_and_query
+            .query_map(&[&owner_id, &query],
                        |row| Entity::Media {
                            id: row.get(0),
                            file_id: row.get(1),

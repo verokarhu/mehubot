@@ -13,6 +13,7 @@ use std::error::Error;
 use std::thread;
 use std::time::Duration;
 use telegram::Message;
+use data::{Entity, MediaType};
 
 static MESSAGE_CHECK_INTERVAL_MSEC: u64 = 200;
 
@@ -39,15 +40,33 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 
     loop {
         match client.receive_update() {
-            Message::InlineQuery { id, query } => handle_query(query),
-            Message::Photo { file_id, owner_id, tags } => handle_photo(&mut db, file_id, owner_id, tags),
+            Message::InlineQuery { inline_query_id, user_id, query } => handle_query(&mut db, &client, inline_query_id, user_id, query),
+            Message::Photo { file_id, media_id, owner_id, tags } => handle_photo(&mut db, file_id, owner_id, tags),
             Message::None => thread::sleep(Duration::from_millis(MESSAGE_CHECK_INTERVAL_MSEC))
         }
     }
 }
 
-fn handle_query(query: String) {
-    info!("Received inline query: {}", query);
+fn handle_query(db: &mut data::DB, client: &telegram::Client, inline_query_id: String, owner_id: i64, query: String) {
+    info!("Received inline query {} with id {}", query, inline_query_id);
+
+    let results = if query.len() == 0 {
+        db.read_media(owner_id)
+    } else {
+        db.read_media_with_query(owner_id, query)
+    };
+
+    client.answer_inline_query(inline_query_id,
+                               results
+                                   .iter()
+                                   .map(|m| {
+                                       match m {
+                                           &Entity::Media { ref id, ref file_id, ref media_type } => match media_type {
+                                               &MediaType::Photo => Message::Photo { file_id: file_id.clone(), media_id: id.clone(), owner_id, tags: Vec::new() }
+                                           },
+                                           _ => Message::None
+                                       }
+                                   }).collect());
 }
 
 fn handle_photo(db: &mut data::DB, file_id: String, owner_id: i64, tags: Vec<String>) {

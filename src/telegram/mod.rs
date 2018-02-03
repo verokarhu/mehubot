@@ -10,21 +10,27 @@ use self::reqwest::header::ContentType;
 
 static LONG_POLLING_TIMEOUT: u16 = 600;
 
-struct HttpClient {
+struct HttpPollClient {
     get_updates_url: String,
     get_updates_latest_id: Option<i64>,
+    client: reqwest::Client,
+}
+
+struct HttpClient {
+    answer_inline_query_url: String,
     client: reqwest::Client,
 }
 
 pub struct Client {
     receiver: Receiver<api::Update>,
     sender: Sender<bool>,
+    http_client: HttpClient,
 }
 
 pub enum Message {
     None,
-    InlineQuery { id: String, query: String },
-    Photo { file_id: String, owner_id: i64, tags: Vec<String> },
+    InlineQuery { inline_query_id: String, user_id: i64, query: String },
+    Photo { file_id: String, media_id: i64, owner_id: i64, tags: Vec<String> },
 }
 
 mod api {
@@ -45,6 +51,26 @@ mod api {
         pub id: String,
         pub from: User,
         pub query: String,
+    }
+
+    #[derive(Serialize)]
+    pub struct AnswerInlineQuery {
+        pub inline_query_id: String,
+        pub results: Vec<Answer>,
+    }
+
+    #[derive(Serialize)]
+    pub struct InlineQueryResultCachedPhoto {
+        #[serde(rename = "type")]
+        pub _type: String,
+        pub id: String,
+        pub photo_file_id: String,
+    }
+
+    #[derive(Serialize)]
+    #[serde(untagged)]
+    pub enum Answer {
+        Photo(InlineQueryResultCachedPhoto),
     }
 
     #[derive(Deserialize)]
@@ -90,15 +116,17 @@ impl Client {
 
         let (tx, receiver): (Sender<api::Update>, Receiver<api::Update>) = mpsc::channel();
         let (sender, rx): (Sender<bool>, Receiver<bool>) = mpsc::channel();
+        let answer_inline_query_url = format!("https://api.telegram.org/bot{}/answerInlineQuery", api_key);
+        let http_client = HttpClient { answer_inline_query_url, client: reqwest::Client::new() };
 
         thread::spawn(move || {
             let get_updates_url = format!("https://api.telegram.org/bot{}/getUpdates", api_key);
-            let mut http_client = HttpClient { get_updates_url, get_updates_latest_id: None, client: reqwest::Client::new() };
+            let mut http_client = HttpPollClient { get_updates_url, get_updates_latest_id: None, client: reqwest::Client::new() };
 
             http_client.poll_server(tx, rx);
         });
 
-        Ok(Client { receiver, sender })
+        Ok(Client { receiver, sender, http_client })
     }
 
     pub fn receive_update(&self) -> Message {
@@ -108,9 +136,13 @@ impl Client {
             Err(e) => panic!(e)
         }
     }
+
+    pub fn answer_inline_query(&self, inline_query_id: String, messages: Vec<Message>) {
+        self.http_client.answer_inline_query(inline_query_id, messages);
+    }
 }
 
-impl HttpClient {
+impl HttpPollClient {
     pub fn poll_server(&mut self, tx: Sender<api::Update>, rx: Receiver<bool>) {
         let mut shutdown = false;
 
@@ -184,9 +216,45 @@ impl HttpClient {
     }
 }
 
+impl HttpClient {
+    fn answer_inline_query(&self, inline_query_id: String, messages: Vec<Message>) {
+        let url = reqwest::Url::parse(&self.answer_inline_query_url).expect("Could not parse answer_inline_query_url.");
+        let results = messages.iter()
+                              .map(|m| {
+                                  match m {
+                                      &Message::Photo { ref file_id, ref media_id, .. } => Some(api::Answer::Photo(api::InlineQueryResultCachedPhoto {
+                                          _type: "photo".to_string(),
+                                          id: media_id.to_string(),
+                                          photo_file_id: file_id.clone(),
+                                      })),
+                                      _ => None
+                                  }
+                              })
+                              .filter(|a| a.is_some())
+                              .map(|a| a.unwrap())
+                              .collect();
+
+        let body = serde_json::to_string(&api::AnswerInlineQuery { inline_query_id, results }).expect("Could not serialize AnswerInlineQuery");
+
+        info!("Request body is {}", body);
+
+        match self.client
+                  .post(url)
+                  .header(ContentType::json())
+                  .body(body)
+                  .send() {
+            Ok(_) => (),
+            Err(e) => {
+                error!("POST to answerInlineQuery failed: {}", e);
+                return;
+            }
+        };
+    }
+}
+
 fn process_update(update: api::Update) -> Message {
     if let Some(q) = update.inline_query {
-        return Message::InlineQuery { id: q.id, query: q.query };
+        return Message::InlineQuery { inline_query_id: q.id, user_id: q.from.id, query: q.query };
     }
 
     if let Some(m) = update.message {
@@ -208,7 +276,7 @@ fn process_message(message: api::Message) -> Message {
     if let Some(owner) = message.from {
         if let Some(photos) = message.photo {
             if let Some(photo) = photos.last() {
-                return Message::Photo { file_id: photo.file_id.clone(), owner_id: owner.id, tags };
+                return Message::Photo { file_id: photo.file_id.clone(), media_id: 0, owner_id: owner.id, tags };
             }
         }
     }
