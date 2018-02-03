@@ -41,6 +41,7 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
     loop {
         match client.receive_update() {
             Message::InlineQuery { inline_query_id, user_id, query } => handle_query(&mut db, &client, inline_query_id, user_id, query),
+            Message::ChosenInlineResult { media_id, query } => handle_chosen_inline_result(&mut db, media_id, query),
             Message::Photo { file_id, media_id, owner_id, tags } => handle_photo(&mut db, file_id, owner_id, tags),
             Message::None => thread::sleep(Duration::from_millis(MESSAGE_CHECK_INTERVAL_MSEC))
         }
@@ -77,4 +78,10 @@ fn handle_photo(db: &mut data::DB, file_id: String, owner_id: i64, tags: Vec<Str
     for tag in tags {
         db.insert(data::Entity::Tag { id: 0, media_id, tag, counter: 0 });
     }
+}
+
+fn handle_chosen_inline_result(db: &mut data::DB, media_id: i64, query: String) {
+    info!("Received chosen inline result for query {} with media_id {}", query, media_id);
+
+    db.increase_tag_counter(media_id, query);
 }

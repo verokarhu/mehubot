@@ -30,6 +30,7 @@ pub struct Client {
 pub enum Message {
     None,
     InlineQuery { inline_query_id: String, user_id: i64, query: String },
+    ChosenInlineResult { media_id: i64, query: String },
     Photo { file_id: String, media_id: i64, owner_id: i64, tags: Vec<String> },
 }
 
@@ -49,6 +50,13 @@ mod api {
     #[derive(Deserialize)]
     pub struct InlineQuery {
         pub id: String,
+        pub from: User,
+        pub query: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct ChosenInlineResult {
+        pub result_id: String,
         pub from: User,
         pub query: String,
     }
@@ -77,6 +85,7 @@ mod api {
     pub struct Update {
         pub update_id: i64,
         pub inline_query: Option<InlineQuery>,
+        pub chosen_inline_result: Option<ChosenInlineResult>,
         pub message: Option<Message>,
     }
 
@@ -259,6 +268,11 @@ fn process_update(update: api::Update) -> Message {
 
     if let Some(m) = update.message {
         return process_message(m);
+    }
+
+    if let Some(r) = update.chosen_inline_result {
+        let media_id = r.result_id.parse::<i64>().expect("Returned result_id not an integer");
+        return Message::ChosenInlineResult { media_id, query: r.query };
     }
 
     Message::None

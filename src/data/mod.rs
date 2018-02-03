@@ -19,6 +19,8 @@ static SQL_READ_ACCESS: &'static str = "SELECT media_id FROM access WHERE media_
 static SQL_READ_MEDIA_WITH_USER: &'static str = "SELECT DISTINCT a.media_id, file_id, media_type FROM media AS a, access AS b, tag AS c WHERE a.media_id = b.media_id AND a.media_id = c.media_id AND owner_id = ? ORDER BY counter DESC;";
 static SQL_READ_MEDIA_WITH_USER_AND_QUERY: &'static str = "SELECT a.media_id, file_id, media_type FROM media AS a, access AS b, tag AS c WHERE a.media_id = b.media_id AND a.media_id = c.media_id AND owner_id = ? AND tag LIKE ? ORDER BY counter DESC;";
 
+static SQL_INCREASE_TAG_COUNTER: &'static str = "UPDATE tag SET counter = counter + 1 WHERE media_id = ? AND tag LIKE ?;";
+
 static SQL_TRANSACTION_BEGIN: &'static str = "BEGIN TRANSACTION;";
 static SQL_TRANSACTION_END: &'static str = "END TRANSACTION;";
 
@@ -61,6 +63,7 @@ struct StatementCache<'a> {
     read_media_with_owner_and_query: rusqlite::Statement<'a>,
     read_tag: rusqlite::Statement<'a>,
     read_access: rusqlite::Statement<'a>,
+    increase_tag_counter: rusqlite::Statement<'a>,
     transaction_begin: rusqlite::Statement<'a>,
     transaction_end: rusqlite::Statement<'a>,
 }
@@ -125,6 +128,10 @@ impl<'a> DB<'a> {
                            .prepare(SQL_READ_ACCESS)
                            .expect("Failed preparing access read statement.");
 
+        let increase_tag_counter = c.sqlite_conn
+                                    .prepare(SQL_INCREASE_TAG_COUNTER)
+                                    .expect("Failed preparing increase tag counter statement.");
+
         let transaction_begin = c.sqlite_conn
                                  .prepare(SQL_TRANSACTION_BEGIN)
                                  .expect("Failed preparing transaction begin statement.");
@@ -142,6 +149,7 @@ impl<'a> DB<'a> {
             read_media_with_owner_and_query,
             read_tag,
             read_access,
+            increase_tag_counter,
             transaction_begin,
             transaction_end,
         };
@@ -177,6 +185,15 @@ impl<'a> DB<'a> {
             .expect("Failed to read media with owner_id.")
             .filter_map(|r| r.ok())
             .collect()
+    }
+
+    pub fn increase_tag_counter(&mut self, media_id: i64, query: String) {
+        let query = query + "%";
+
+        self.statement_cache
+            .increase_tag_counter
+            .execute(&[&media_id, &query])
+            .expect("Failed to update tag counter.");
     }
 
     pub fn insert(&mut self, entity: Entity) -> i64 {
