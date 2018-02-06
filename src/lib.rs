@@ -12,7 +12,8 @@ mod data;
 use std::error::Error;
 use std::thread;
 use std::time::Duration;
-use telegram::{UpdateMessage, AnswerMessage};
+use std::collections::HashMap;
+use telegram::{UpdateMessage, AnswerMessage, CallbackCommand};
 use data::{Entity, MediaType};
 
 static MESSAGE_CHECK_INTERVAL_MSEC: u64 = 200;
@@ -35,6 +36,7 @@ pub fn configure() -> Result<Config, Box<Error>> {
 pub fn run(config: Config) -> Result<(), Box<Error>> {
     let client = telegram::Client::new(config.api_key)?;
     let mut db = data::DB::new(&config.database_connection);
+    let mut cache = HashMap::new();
 
     env_logger::init();
 
@@ -44,6 +46,8 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
             UpdateMessage::ChosenInlineResult { media_id, query } => handle_chosen_inline_result(&mut db, media_id, query),
             UpdateMessage::Photo { file_id, tags } => handle_media(&mut db, file_id, tags, data::MediaType::Photo),
             UpdateMessage::Document { file_id, mime_type, tags } => handle_document(&mut db, file_id, mime_type, tags),
+            UpdateMessage::CallbackQuery(command) => handle_callback_query(&mut db, &mut cache, &client, command),
+            UpdateMessage::ReplyToMessage { ref message_id, ref text } => handle_reply_message(&mut db, &mut cache, message_id, text),
             UpdateMessage::None => thread::sleep(Duration::from_millis(MESSAGE_CHECK_INTERVAL_MSEC))
         }
     }
@@ -92,5 +96,31 @@ fn handle_document(mut db: &mut data::DB, file_id: String, mime_type: String, ta
     match mime_type.as_ref() {
         "video/mp4" => handle_media(&mut db, file_id, tags, data::MediaType::Mpeg4Gif),
         _ => ()
+    }
+}
+
+fn handle_callback_query(db: &mut data::DB, cache: &mut HashMap<i64, i64>, client: &telegram::Client, command: CallbackCommand) {
+    match command {
+        CallbackCommand::Tag { media_id, user_id } => {
+            match db.read_media_with_mediaid(media_id) {
+                Entity::Media { ref file_id, ref media_type, .. } => match media_type {
+                    &MediaType::Photo => if let Some(message_id) = client.send_photo(user_id, file_id.clone()) {
+                        cache.insert(message_id, media_id);
+                    },
+                    _ => ()
+                },
+                _ => ()
+            }
+        }
+    }
+}
+
+fn handle_reply_message(db: &mut data::DB, cache: &mut HashMap<i64, i64>, message_id: &i64, text: &str) {
+    if cache.contains_key(message_id) {
+        for s in text.split(" ") {
+            db.insert(Entity::Tag { id: 0, media_id: cache.get(message_id).unwrap().clone(), tag: s.to_string(), counter: 0 });
+        }
+
+        cache.remove(message_id);
     }
 }
