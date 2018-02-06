@@ -107,7 +107,9 @@ fn handle_callback_query(db: &mut data::DB, cache: &mut HashMap<i64, i64>, clien
                     &MediaType::Photo => if let Some(message_id) = client.send_photo(user_id, file_id.clone()) {
                         cache.insert(message_id, media_id);
                     },
-                    _ => ()
+                    &MediaType::Mpeg4Gif => if let Some(message_id) = client.send_mpeg4gif(user_id, file_id.clone()) {
+                        cache.insert(message_id, media_id);
+                    }
                 },
                 _ => ()
             }

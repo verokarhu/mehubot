@@ -20,6 +20,7 @@ struct HttpPollClient {
 struct HttpClient {
     answer_inline_query_url: String,
     send_photo_url: String,
+    send_document_url: String,
     client: reqwest::Client,
 }
 
@@ -195,6 +196,14 @@ mod api {
         pub caption: String,
         pub reply_markup: Option<ForceReply>,
     }
+
+    #[derive(Serialize)]
+    pub struct SendDocument {
+        pub chat_id: i64,
+        pub document: String,
+        pub caption: String,
+        pub reply_markup: Option<ForceReply>,
+    }
 }
 
 impl Client {
@@ -207,7 +216,8 @@ impl Client {
         let (sender, rx): (Sender<bool>, Receiver<bool>) = mpsc::channel();
         let answer_inline_query_url = format!("https://api.telegram.org/bot{}/answerInlineQuery", api_key);
         let send_photo_url = format!("https://api.telegram.org/bot{}/sendPhoto", api_key);
-        let http_client = HttpClient { answer_inline_query_url, send_photo_url, client: reqwest::Client::new() };
+        let send_document_url = format!("https://api.telegram.org/bot{}/sendDocument", api_key);
+        let http_client = HttpClient { answer_inline_query_url, send_photo_url, send_document_url, client: reqwest::Client::new() };
 
         thread::spawn(move || {
             let get_updates_url = format!("https://api.telegram.org/bot{}/getUpdates", api_key);
@@ -233,6 +243,10 @@ impl Client {
 
     pub fn send_photo(&self, chat_id: i64, photo: String) -> Option<i64> {
         self.http_client.send_photo(chat_id, photo)
+    }
+
+    pub fn send_mpeg4gif(&self, chat_id: i64, document: String) -> Option<i64> {
+        self.http_client.send_document(chat_id, document)
     }
 }
 
@@ -357,6 +371,33 @@ impl HttpClient {
             Ok(r) => r,
             Err(e) => {
                 error!("POST to sendPhoto failed: {}", e);
+                return None;
+            }
+        };
+
+        parse_response_message_id(response)
+    }
+
+    fn send_document(&self, chat_id: i64, document: String) -> Option<i64> {
+        let url = reqwest::Url::parse(&self.send_document_url).expect("Could not parse send_document_url.");
+
+        let body = serde_json::to_string(&api::SendDocument {
+            chat_id,
+            document,
+            caption: TAG_MEDIA_MESSAGE.to_string(),
+            reply_markup: Some(api::ForceReply { force_reply: true }),
+        }).expect("Could not serialize AnswerInlineQuery");
+
+        info!("Request body in send_photo is {}", body);
+
+        let response = match self.client
+                                 .post(url)
+                                 .header(ContentType::json())
+                                 .body(body)
+                                 .send() {
+            Ok(r) => r,
+            Err(e) => {
+                error!("POST to sendDocument failed: {}", e);
                 return None;
             }
         };
