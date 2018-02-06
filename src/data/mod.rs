@@ -235,7 +235,7 @@ impl<'a> DB<'a> {
                                        .next() {
                     row.unwrap().get(0)
                 } else {
-                    info!("Inserting tag {} to media_id {}", media_id, tag);
+                    info!("Inserting tag {} to media_id {}", tag, media_id);
 
                     self.statement_cache
                         .insert_tag
