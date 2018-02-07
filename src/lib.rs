@@ -69,7 +69,8 @@ fn handle_query(db: &mut data::DB, client: &telegram::Client, inline_query_id: S
                                        match m {
                                            &Entity::Media { ref id, ref file_id, ref media_type } => match media_type {
                                                &MediaType::Photo => AnswerMessage::Photo { file_id: file_id.clone(), media_id: id.clone() },
-                                               &MediaType::Mpeg4Gif => AnswerMessage::Mpeg4Gif { file_id: file_id.clone(), media_id: id.clone() }
+                                               &MediaType::Mpeg4Gif => AnswerMessage::Mpeg4Gif { file_id: file_id.clone(), media_id: id.clone() },
+                                               &MediaType::ImageGif => AnswerMessage::Gif { file_id: file_id.clone(), media_id: id.clone() }
                                            },
                                            _ => AnswerMessage::None
                                        }
@@ -95,6 +96,7 @@ fn handle_document(mut db: &mut data::DB, file_id: String, mime_type: String, ta
 
     match mime_type.as_ref() {
         "video/mp4" => handle_media(&mut db, file_id, tags, data::MediaType::Mpeg4Gif),
+        "image/gif" => handle_media(&mut db, file_id, tags, data::MediaType::ImageGif),
         _ => ()
     }
 }
@@ -103,13 +105,12 @@ fn handle_callback_query(db: &mut data::DB, cache: &mut HashMap<i64, i64>, clien
     match command {
         CallbackCommand::Tag { media_id, user_id } => {
             match db.read_media_with_mediaid(media_id) {
-                Entity::Media { ref file_id, ref media_type, .. } => match media_type {
-                    &MediaType::Photo => if let Some(message_id) = client.send_photo(user_id, file_id.clone()) {
-                        cache.insert(message_id, media_id);
-                    },
-                    &MediaType::Mpeg4Gif => if let Some(message_id) = client.send_mpeg4gif(user_id, file_id.clone()) {
-                        cache.insert(message_id, media_id);
-                    }
+                Entity::Media { ref file_id, ref media_type, .. } => if let Some(message_id) = match media_type {
+                    &MediaType::Photo => client.send_photo(user_id, file_id.clone()),
+                    &MediaType::Mpeg4Gif => client.send_document(user_id, file_id.clone()),
+                    &MediaType::ImageGif => client.send_document(user_id, file_id.clone()),
+                } {
+                    cache.insert(message_id, media_id);
                 },
                 _ => ()
             }

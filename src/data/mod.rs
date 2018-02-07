@@ -26,6 +26,7 @@ static SQL_TRANSACTION_END: &'static str = "END TRANSACTION;";
 pub enum MediaType {
     Photo,
     Mpeg4Gif,
+    ImageGif,
 }
 
 impl ToSql for MediaType {
@@ -33,6 +34,7 @@ impl ToSql for MediaType {
         match self {
             &MediaType::Photo => Ok(ToSqlOutput::Owned(Value::Integer(0))),
             &MediaType::Mpeg4Gif => Ok(ToSqlOutput::Owned(Value::Integer(1))),
+            &MediaType::ImageGif => Ok(ToSqlOutput::Owned(Value::Integer(2))),
         }
     }
 }
@@ -42,6 +44,7 @@ impl FromSql for MediaType {
         match value.as_i64() {
             Ok(0) => Ok(MediaType::Photo),
             Ok(1) => Ok(MediaType::Mpeg4Gif),
+            Ok(2) => Ok(MediaType::ImageGif),
             Ok(_) => panic!("Unkown media type"),
             Err(e) => Err(e)
         }

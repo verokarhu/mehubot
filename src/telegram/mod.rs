@@ -48,6 +48,7 @@ pub enum AnswerMessage {
     None,
     Photo { file_id: String, media_id: i64 },
     Mpeg4Gif { file_id: String, media_id: i64 },
+    Gif { file_id: String, media_id: i64 },
 }
 
 mod api {
@@ -121,10 +122,20 @@ mod api {
     }
 
     #[derive(Serialize)]
+    pub struct InlineQueryResultCachedGif {
+        #[serde(rename = "type")]
+        pub _type: String,
+        pub id: String,
+        pub gif_file_id: String,
+        pub reply_markup: Option<InlineKeyboardMarkup>,
+    }
+
+    #[derive(Serialize)]
     #[serde(untagged)]
     pub enum Answer {
         Photo(InlineQueryResultCachedPhoto),
         Mpeg4Gif(InlineQueryResultCachedMpeg4Gif),
+        Gif(InlineQueryResultCachedGif),
     }
 
     #[derive(Deserialize)]
@@ -245,7 +256,7 @@ impl Client {
         self.http_client.send_photo(chat_id, photo)
     }
 
-    pub fn send_mpeg4gif(&self, chat_id: i64, document: String) -> Option<i64> {
+    pub fn send_document(&self, chat_id: i64, document: String) -> Option<i64> {
         self.http_client.send_document(chat_id, document)
     }
 }
@@ -446,6 +457,12 @@ fn build_answer_message(message: &AnswerMessage) -> Option<api::Answer> {
             _type: "mpeg4_gif".to_string(),
             id: media_id.to_string(),
             mpeg4_file_id: file_id.clone(),
+            reply_markup: build_inline_keyboard(media_id),
+        })),
+        &AnswerMessage::Gif { ref file_id, ref media_id } => Some(api::Answer::Gif(api::InlineQueryResultCachedGif {
+            _type: "gif".to_string(),
+            id: media_id.to_string(),
+            gif_file_id: file_id.clone(),
             reply_markup: build_inline_keyboard(media_id),
         })),
         _ => None
